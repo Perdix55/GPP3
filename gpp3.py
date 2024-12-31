@@ -1,76 +1,72 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+import requests
 import matplotlib.pyplot as plt
 
-# Function to train the model
-def train_model(data):
-    X = np.array(data["oil_price"]).reshape(-1, 1)  # Feature: Oil prices
-    y = np.array(data["gas_price"])  # Target: Gas prices
-    model = LinearRegression()
-    model.fit(X, y)
-    return model
+# API Endpoint and Key
+API_URL = "https://api.eia.gov/v2/petroleum/pri/gnd/data/"
+API_KEY = "qhkVpypjymSh1gOSmNuMxbglfan3bDy4nxchqQRu"
 
-# Function to predict gas prices
-def predict_gas_prices(model, future_oil_prices):
-    future_oil_prices = np.array(future_oil_prices).reshape(-1, 1)
-    return model.predict(future_oil_prices)
+# Function to fetch historical gas prices from the API
+def fetch_historical_gas_prices(api_url, api_key):
+    params = {
+        "frequency": "annual",
+        "data[0]": "value",
+        "sort[0][column]": "period",
+        "sort[0][direction]": "desc",
+        "offset": 0,
+        "length": 5000,
+        "api_key": api_key,
+    }
+    response = requests.get(api_url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        records = data.get("response", {}).get("data", [])
+        df = pd.DataFrame(records)
+        return df
+    else:
+        st.error(f"Failed to fetch data: {response.status_code}")
+        return pd.DataFrame()
 
 # Streamlit App
-st.title("Gas Price Prediction Application")
-st.write("This app predicts gas prices based on current oil prices using a linear regression model.")
+st.title("Historical Gas Price Analysis")
+st.write("This app retrieves and visualizes historical gas prices using the EIA API.")
 
-# Example historical data
-st.sidebar.header("Input Historical Data")
-example_data = {
-    "oil_price": [50, 60, 70, 80, 90, 100],  # Crude oil prices in USD per barrel
-    "gas_price": [2.5, 2.7, 3.0, 3.3, 3.6, 3.9],  # Gasoline prices in USD per gallon
-}
-df = pd.DataFrame(example_data)
+# Fetch data
+st.subheader("Fetching Historical Data...")
+data = fetch_historical_gas_prices(API_URL, API_KEY)
 
-# Display historical data and allow user to modify it
-st.sidebar.write("Modify historical data as needed:")
-oil_prices = st.sidebar.text_input("Oil Prices (comma-separated):", "50, 60, 70, 80, 90, 100")
-gas_prices = st.sidebar.text_input("Gas Prices (comma-separated):", "2.5, 2.7, 3.0, 3.3, 3.6, 3.9")
+if not data.empty:
+    # Process and display the data
+    st.write(f"### Total Records Retrieved: {len(data)}")
+    st.write("#### Sample Data:")
+    st.write(data.head())
 
-try:
-    df = pd.DataFrame({
-        "oil_price": [float(x.strip()) for x in oil_prices.split(",")],
-        "gas_price": [float(x.strip()) for x in gas_prices.split(",")]
-    })
-except ValueError:
-    st.sidebar.error("Please ensure the input values are numeric and comma-separated.")
+    # Prepare data for visualization
+    data["period"] = pd.to_datetime(data["period"])
+    data = data.sort_values("period")
+    data["value"] = data["value"].astype(float)
 
-# Train the model
-model = train_model(df)
-
-# Future oil prices input
-st.subheader("Predict Future Gas Prices")
-future_oil_prices = st.text_input("Enter future oil prices (comma-separated):", "105, 110, 115")
-
-try:
-    future_oil_prices_list = [float(x.strip()) for x in future_oil_prices.split(",")]
-    predicted_gas_prices = predict_gas_prices(model, future_oil_prices_list)
-
-    # Display Predictions
-    st.write("### Predictions")
-    for oil_price, gas_price in zip(future_oil_prices_list, predicted_gas_prices):
-        st.write(f"Predicted Gas Price for Oil Price ${oil_price:.2f}: ${gas_price:.2f}")
-
-    # Visualization
-    st.write("### Visualization")
-    plt.figure(figsize=(10, 6))
-    plt.scatter(df["oil_price"], df["gas_price"], color="blue", label="Historical Data")
-    plt.plot(df["oil_price"], model.predict(np.array(df["oil_price"]).reshape(-1, 1)), color="green", label="Fitted Model")
-    plt.scatter(future_oil_prices_list, predicted_gas_prices, color="red", label="Predictions")
-    plt.title("Gas Price Prediction Based on Oil Prices")
-    plt.xlabel("Oil Price (USD per Barrel)")
-    plt.ylabel("Gas Price (USD per Gallon)")
+    # Line chart for gas prices
+    st.subheader("Gas Price Trends Over Time")
+    plt.figure(figsize=(10, 5))
+    plt.plot(data["period"], data["value"], marker="o", label="Gas Prices (USD)")
+    plt.title("Annual Gas Price Trends")
+    plt.xlabel("Year")
+    plt.ylabel("Price (USD per Gallon)")
+    plt.grid()
     plt.legend()
-    plt.grid(True)
     st.pyplot(plt)
 
-except ValueError:
-    st.error("Ensure that future oil prices are numeric and comma-separated.")
+    # Highlight the most recent prices
+    st.subheader("Most Recent Gas Prices")
+    st.write(data.tail(5))
 
+    # Insights
+    st.subheader("Insights and Trends")
+    if data["value"].iloc[-1] > data["value"].iloc[-2]:
+        st.write("Gas prices are trending upward in the most recent year.")
+    else:
+        st.write("Gas prices are trending downward in the most recent year.")
+else:
+    st.error("No data available. Please check the API or try again later.")
